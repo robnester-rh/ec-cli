@@ -12,6 +12,7 @@ SHELL=$(if $@,$(info ❱ [1m$@[0m))$(_SHELL)
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 COPY:=The Enterprise Contract Contributors
 COSIGN_VERSION=$(shell go list -f '{{.Version}}' -m github.com/sigstore/cosign/v2)
+export CGO_ENABLED := 0
 
 ##@ Information
 
