@@ -21,8 +21,10 @@ package downloader
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
+	"github.com/enterprise-contract/go-gather/metadata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -39,10 +41,12 @@ func (m *mockDownloader) Download(ctx context.Context, dest string, sourceUrls [
 
 func TestDownloader_Download(t *testing.T) {
 	tests := []struct {
-		name   string
-		dest   string
-		source string
-		err    error
+		name        string
+		dest        string
+		source      string
+		err         error
+		useGoGather string
+		gatherErr   error
 	}{
 		{
 			name:   "Downloads",
@@ -61,20 +65,52 @@ func TestDownloader_Download(t *testing.T) {
 			source: "http://example.com",
 			err:    errors.New("attempting to download from insecure source: http://example.com"),
 		},
+		{
+			name:        "experimental download",
+			dest:        "dir",
+			source:      "example.com/repo.git",
+			useGoGather: "1",
+		},
+		{
+			name:        "experimental download with error",
+			dest:        "dir",
+			source:      "example.com/repo.git",
+			useGoGather: "1",
+			err:         errors.New("gather error"),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := mockDownloader{}
 			ctx := WithDownloadImpl(context.TODO(), &d)
-			d.On("Download", ctx, tt.dest, []string{tt.source}).Return(tt.err)
+
+			originalGatherFunction := gatherFunc
+
+			if tt.useGoGather == "1" {
+				t.Setenv("USEGOGATHER", "1")
+				gatherFunc = func(_ context.Context, _ string, _ string) (metadata.Metadata, error) {
+					return nil, tt.err
+				}
+			} else {
+				os.Unsetenv("USEGOGATHER")
+				d.On("Download", ctx, tt.dest, []string{tt.source}).Return(tt.err)
+			}
+
+			defer func() {
+				gatherFunc = originalGatherFunction
+			}()
 
 			err := Download(ctx, tt.dest, tt.source, false)
-			if tt.err == nil {
+			if tt.err == nil && tt.gatherErr == nil {
 				assert.NoError(t, err)
 				mock.AssertExpectationsForObjects(t, &d)
 			} else {
-				assert.True(t, err.Error() == tt.err.Error())
+				if tt.gatherErr != nil {
+					assert.EqualError(t, err, tt.gatherErr.Error())
+				} else {
+					assert.EqualError(t, err, tt.err.Error())
+				}
 			}
 		})
 	}
