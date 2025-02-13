@@ -14,7 +14,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-## Build
+# -----------------------------------
+# Stage 1: Build ec binaries
+# -----------------------------------
 
 FROM docker.io/library/golang:1.22.7 AS build
 
@@ -41,13 +43,23 @@ COPY . .
 
 RUN /build/build.sh "${BUILD_LIST}" "${BUILD_SUFFIX}"
 
-## Final image
+# -----------------------------------
+# Stage 2: Install extra packages
+# (This stage uses UBI minimal which includes microdnf.)
+# -----------------------------------
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.5@sha256:b87097994ed62fbf1de70bc75debe8dacf3ea6e00dd577d74503ef66452c59d6 AS packages
+# Update repos and install jq, gzip, and ca-certificates
+RUN microdnf update -y --nodocs --setopt=keepcache=0 --refresh && \
+  microdnf install -y --nodocs --setopt=keepcache=0 jq gzip ca-certificates && \
+  microdnf clean all
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.5@sha256:b87097994ed62fbf1de70bc75debe8dacf3ea6e00dd577d74503ef66452c59d6
-
+# -----------------------------------
+# Stage 3: Final image based on UBI-micro
+# (It does NOT include microdnf, so we must copy in the tools.)
+# -----------------------------------
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.5@sha256:4a2052ef4db4fd1a53b45263b5067eb01d5745fdd300b27986952af27887bc27
 ARG TARGETOS
 ARG TARGETARCH
-
 ARG CLI_NAME="Conforma"
 
 LABEL \
@@ -58,8 +70,13 @@ LABEL \
   io.k8s.display-name="${CLI_NAME}" \
   io.openshift.tags="conforma ec opa cosign sigstore"
 
-# Install tools we want to use in the Tekton task
-RUN microdnf upgrade --assumeyes --nodocs --setopt=keepcache=0 --refresh && microdnf -y --nodocs --setopt=keepcache=0 install gzip jq
+# Copy in the packages from the 'packages' stage.
+# These are the binaries needed at runtime.
+COPY --from=packages /usr/bin/jq /usr/bin/gzip /usr/bin/
+# Copy the jq shared library that jq depends on.
+COPY --from=packages /usr/lib64/libjq.so.1 /usr/lib64/libonig.so.5 /usr/lib64/
+# Copy the ca certs from the 'packages' stage.
+COPY --from=packages /etc/ssl/certs/ca-bundle.crt /etc/ssl/certs/
 
 # Copy all the binaries so they're available to extract and download
 # (Beware if you're testing this locally it will copy everything from
